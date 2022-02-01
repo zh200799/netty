@@ -36,6 +36,7 @@ import io.netty.util.internal.logging.InternalLoggerFactory;
 
 import java.net.SocketAddress;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
+import java.util.stream.IntStream;
 
 import static io.netty.channel.ChannelHandlerMask.MASK_BIND;
 import static io.netty.channel.ChannelHandlerMask.MASK_CHANNEL_ACTIVE;

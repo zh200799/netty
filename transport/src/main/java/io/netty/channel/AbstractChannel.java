@@ -865,7 +865,9 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
 
             int size;
             try {
+                // 需要 write 的数据,如果有需要,统一转换为 DirectByteBuf
                 msg = filterOutboundMessage(msg);
+                // 计算 msg 的大小
                 size = pipeline.estimatorHandle().size(msg);
                 if (size < 0) {
                     size = 0;
@@ -878,7 +880,7 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
                 }
                 return;
             }
-
+            // 将 msg 存入 OutboundBuffer 中
             outboundBuffer.addMessage(msg, size, promise);
         }
 
@@ -890,7 +892,7 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
             if (outboundBuffer == null) {
                 return;
             }
-
+            // 更新 OutboundBuffer flushed 的区间
             outboundBuffer.addFlush();
             flush0();
         }
@@ -903,6 +905,7 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
             }
 
             final ChannelOutboundBuffer outboundBuffer = this.outboundBuffer;
+            // 检查 OutboundBuffer 是否存在需要 flushed 的数据,没有直接返回
             if (outboundBuffer == null || outboundBuffer.isEmpty()) {
                 return;
             }

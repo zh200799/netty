@@ -123,6 +123,8 @@ public final class ChannelOutboundBuffer implements Serializable {
      * the message was written.
      */
     public void addMessage(Object msg, int size, ChannelPromise promise) {
+        // 将 msg 封装为 Entry,放入Entry 队尾
+        // 基于 ThreadLocal 的轻量级对象池 RECYCLYER 处理 Entry的申请和释放
         Entry entry = Entry.newInstance(msg, size, total(msg), promise);
         if (tailEntry == null) {
             flushedEntry = null;
@@ -135,6 +137,8 @@ public final class ChannelOutboundBuffer implements Serializable {
             unflushedEntry = entry;
         }
 
+        // 将 msg 封装成的 Entry加入到 unflushed 后再 incrementPending
+        // incrementPending调用后可能改为可写, 有另外的 msg 进入 unflushed, 即防止 msg 乱序
         // increment pending bytes after adding message to the unflushed arrays.
         // See https://github.com/netty/netty/issues/1619
         incrementPendingOutboundBytes(entry.pendingSize, false);
@@ -164,6 +168,7 @@ public final class ChannelOutboundBuffer implements Serializable {
                 }
                 entry = entry.next;
             } while (entry != null);
+            // 操作结束后, 原 unflushedEntry 所有 entry 都加入到 Flushed 的 Entry中, 对totalPendingSize进行递减更新
 
             // All flushed so reset unflushedEntry
             unflushedEntry = null;
@@ -184,6 +189,7 @@ public final class ChannelOutboundBuffer implements Serializable {
         }
 
         long newWriteBufferSize = TOTAL_PENDING_SIZE_UPDATER.addAndGet(this, size);
+        // 若 totalPendingSize 超过高水位,则 channel 改为不可写
         if (newWriteBufferSize > channel.config().getWriteBufferHighWaterMark()) {
             setUnwritable(invokeLater);
         }

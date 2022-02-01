@@ -414,7 +414,8 @@ abstract class AbstractEpollChannel extends AbstractChannel implements UnixChann
                 remoteAddress.getAddress(), remoteAddress.getPort(), fastOpen);
     }
 
-    protected abstract class AbstractEpollUnsafe extends AbstractUnsafe {
+    protected abstract class
+    AbstractEpollUnsafe extends AbstractUnsafe {
         boolean readPending;
         boolean maybeMoreDataToRead;
         private EpollRecvByteAllocatorHandle allocHandle;

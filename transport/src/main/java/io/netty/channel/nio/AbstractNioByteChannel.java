@@ -216,14 +216,51 @@ public abstract class AbstractNioByteChannel extends AbstractNioChannel {
         if (msg instanceof ByteBuf) {
             ByteBuf buf = (ByteBuf) msg;
             if (!buf.isReadable()) {
+                // 删除当前 Entry, flushed 指向下一个 Entry
                 in.remove();
                 return 0;
             }
-
+            // 将 Entry.msg (即 ByteBuf) 发送出去
+            // 最终调用sun.nio.ch.SocketChannelImpl.write(java.nio.ByteBuffer) 进行数据写入
+            /**
+             *     public int write(ByteBuffer buf) throws IOException {
+             *         if (buf == null)
+             *             throw new NullPointerException();
+             *         synchronized (writeLock) {
+             *             ensureWriteOpen();
+             *             int n = 0;
+             *             try {
+             *                 begin();
+             *                 synchronized (stateLock) {
+             *                     if (!isOpen())
+             *                         return 0;
+             *                     writerThread = NativeThread.current();
+             *                 }
+             *                 for (;;) {
+             *                     n = IOUtil.write(fd, buf, -1, nd, writeLock);
+             *                     if ((n == IOStatus.INTERRUPTED) && isOpen())
+             *                         continue;
+             *                     return IOStatus.normalize(n);
+             *                 }
+             *             } finally {
+             *                 writerCleanup();
+             *                 end(n > 0 || (n == IOStatus.UNAVAILABLE));
+             *                 synchronized (stateLock) {
+             *                     if ((n <= 0) && (!isOutputOpen))
+             *                         throw new AsynchronousCloseException();
+             *                 }
+             *                 assert IOStatus.check(n);
+             *             }
+             *         }
+             *     }
+             */
+            // 返回 0 代表此时 TCP sendBuffer已满
             final int localFlushedAmount = doWriteBytes(buf);
             if (localFlushedAmount > 0) {
+                // 通知 channelPromise 数据写入进度
                 in.progress(localFlushedAmount);
                 if (!buf.isReadable()) {
+                    // 删除当前 Entry, flushed 指向下一个 Entry
                     in.remove();
                 }
                 return 1;
@@ -247,6 +284,7 @@ public abstract class AbstractNioByteChannel extends AbstractNioChannel {
             // Should not reach here.
             throw new Error();
         }
+        // 若 TCP sendBuffer 已满则返回 WRITE_STATUS_SNDBUF_FULL
         return WRITE_STATUS_SNDBUF_FULL;
     }
 
@@ -255,15 +293,21 @@ public abstract class AbstractNioByteChannel extends AbstractNioChannel {
         int writeSpinCount = config().getWriteSpinCount();
         do {
             Object msg = in.current();
+            // 如果flushedEntry == null, 则清除channel 对应的 OP_WRITE 事件并返回
             if (msg == null) {
                 // Wrote all messages.
                 clearOpWrite();
                 // Directly return here so incompleteWrite(...) is not called.
+                // 没有需要写入的数据时直接返回
                 return;
             }
+            // 自旋将 Entry.msg 写入 socket 的 sendBuffer
+            // 默认最多写入 16 次 (!buf.isReadable 的 ByteBuf 不计)
+            // 如果写入时发现 TCP 发送缓冲区已满, 返回 WRITE_STATUS_SNDBUF_FULL, 则 writeSpinCount马上<0
             writeSpinCount -= doWriteInternal(in, msg);
         } while (writeSpinCount > 0);
-
+        // 如果 TCP 发送缓冲区未满时且还有要写入的数据时, writeSpinCount最终=0
+        // 如果 TCP 发送缓冲区已满时, writeSpinCount最终<0
         incompleteWrite(writeSpinCount < 0);
     }
 
@@ -288,15 +332,19 @@ public abstract class AbstractNioByteChannel extends AbstractNioChannel {
 
     protected final void incompleteWrite(boolean setOpWrite) {
         // Did not write completely.
+        // setOpWrite 为 true 则表示当前 TCP 缓冲区已满,则当前SelectionKey添加 write 事件关注,等待可写时触发 write 操作
         if (setOpWrite) {
             setOpWrite();
         } else {
+            // setOpWrite 为 false 则表示当前 TCP 未满, 还有需要写入的数据
+            // 这里将当前SelectionKey移除 write 事件关注, 然后新起一个 Task 去执行, 检测 ChannelOutboundBuffer 是否有待 flush 的数据
             // It is possible that we have set the write OP, woken up by NIO because the socket is writable, and then
             // use our write quantum. In this case we no longer want to set the write OP because the socket is still
             // writable (as far as we know). We will find out next time we attempt to write if the socket is writable
             // and set the write OP if necessary.
             clearOpWrite();
 
+            // 16 次后还未写完,则直接 schedule 一个 task 来继续写, 而不是注册 write 事件来继续写
             // Schedule flush again later so other tasks can be picked up in the meantime
             eventLoop().execute(flushTask);
         }

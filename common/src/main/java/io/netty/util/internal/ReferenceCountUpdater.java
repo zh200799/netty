@@ -67,6 +67,7 @@ public abstract class ReferenceCountUpdater<T extends ReferenceCounted> {
      * Like {@link #realRefCnt(int)} but throws if refCnt == 0
      */
     private static int toLiveRealRefCnt(int rawCnt, int decrement) {
+        // 不为 0 且是偶数则右移一位
         if (rawCnt == 2 || rawCnt == 4 || (rawCnt & 1) == 0) {
             return rawCnt >>> 1;
         }
