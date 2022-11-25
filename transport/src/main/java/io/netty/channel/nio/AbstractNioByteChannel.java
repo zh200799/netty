@@ -131,26 +131,41 @@ public abstract class AbstractNioByteChannel extends AbstractNioChannel {
             }
         }
 
+        /**
+         * 读取客户端发送过来的数据
+         */
         @Override
         public final void read() {
+            // 得到客户端 NioSocketChannel 配置类 NioSocketChannelConfig
             final ChannelConfig config = config();
             if (shouldBreakReadReady(config)) {
                 clearReadPending();
                 return;
             }
+            // 得到客户端 NioSocketChannel 的 pipeline
             final ChannelPipeline pipeline = pipeline();
+
+            // 得到缓冲区分配器, 用于分配内存缓冲
+            // 非 Android 平台, 默认使用 PooledByteBufAllocator
             final ByteBufAllocator allocator = config.getAllocator();
+
+            // 默认返回的实例为 AdaptiveRecvByteBufAllocator, 可以预测下次分配多大内存缓冲区的分配处理器, 根据分配算法指定要分配的内存大小
             final RecvByteBufAllocator.Handle allocHandle = recvBufAllocHandle();
+
+            // 重置读循环最大次数, 重置已读数据的总大小为 0, 重置已读循环的次数为 0
             allocHandle.reset(config);
 
             ByteBuf byteBuf = null;
             boolean close = false;
             try {
                 do {
+                    // 通过分配处理器, 得到一个评估后的内存缓冲区
                     byteBuf = allocHandle.allocate(allocator);
+                    // 从 channel 中读取数据到 byteBuf, 然后根据已读取的大小计算下一次需要分配的 byteBuf 大小, 进行动态调整
                     allocHandle.lastBytesRead(doReadBytes(byteBuf));
+                    // 说明本次循环从对应的 channel 中已无法读取到数据
                     if (allocHandle.lastBytesRead() <= 0) {
-                        // nothing was read. release the buffer.
+                        // 释放缓冲区
                         byteBuf.release();
                         byteBuf = null;
                         close = allocHandle.lastBytesRead() < 0;
@@ -158,16 +173,19 @@ public abstract class AbstractNioByteChannel extends AbstractNioChannel {
                             // There is nothing left to read as we received an EOF.
                             readPending = false;
                         }
+                        // 跳出读循环
                         break;
                     }
-
+                    // 已读循环的次数+1
                     allocHandle.incMessagesRead(1);
                     readPending = false;
+                    // 向 pipeline 中传递一个 channelRead 事件, 并带上这次循环读取到的数据
                     pipeline.fireChannelRead(byteBuf);
                     byteBuf = null;
                 } while (allocHandle.continueReading());
-
+                // 对这次读取到的数据总大小进行评估, 用来判断下一次读取数据时分配多大的缓冲区(缓冲区容量伸缩)
                 allocHandle.readComplete();
+                // 向 pipeline 中传递一个 ChannelReadComplete 事件
                 pipeline.fireChannelReadComplete();
 
                 if (close) {

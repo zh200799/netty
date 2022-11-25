@@ -674,6 +674,8 @@ public final class NioEventLoop extends SingleThreadEventLoop {
     }
 
     private void processSelectedKey(SelectionKey k, AbstractNioChannel ch) {
+        // 客户端视角, 这里 unsafe 是 NioSocketChannelUnsafe
+        // 服务端视角, 这里 unsafe 是 NioMessageUnsafe
         final AbstractNioChannel.NioUnsafe unsafe = ch.unsafe();
         if (!k.isValid()) {
             final EventLoop eventLoop;
@@ -697,9 +699,11 @@ public final class NioEventLoop extends SingleThreadEventLoop {
         }
 
         try {
+            // 获取就绪的 IO 事件
             int readyOps = k.readyOps();
             // We first need to call finishConnect() before try to trigger a read(...) or write(...) as otherwise
             // the NIO JDK channel implementation may throw a NotYetConnectedException.
+            // 发生连接就绪事件
             if ((readyOps & SelectionKey.OP_CONNECT) != 0) {
                 // remove OP_CONNECT as otherwise Selector.select(..) will always return without blocking
                 // See https://github.com/netty/netty/issues/924
@@ -711,6 +715,7 @@ public final class NioEventLoop extends SingleThreadEventLoop {
             }
 
             // Process OP_WRITE first as we may be able to write some queued buffers and so free memory.
+            // 发生了些就绪事件
             if ((readyOps & SelectionKey.OP_WRITE) != 0) {
                 // Call forceFlush which will also take care of clear the OP_WRITE once there is nothing left to write
                 ch.unsafe().forceFlush();
@@ -718,6 +723,9 @@ public final class NioEventLoop extends SingleThreadEventLoop {
 
             // Also check for readOps of 0 to workaround possible JDK bug which may otherwise lead
             // to a spin loop
+            // 处理就绪的读/接收事件
+            // 读就绪事件 NioSocketChannelUnsafe.read();
+            // 接收就绪事件 NioMessageUnsafe.read();
             if ((readyOps & (SelectionKey.OP_READ | SelectionKey.OP_ACCEPT)) != 0 || readyOps == 0) {
                 unsafe.read();
             }
