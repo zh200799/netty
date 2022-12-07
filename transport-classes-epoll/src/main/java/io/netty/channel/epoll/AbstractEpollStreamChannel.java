@@ -741,6 +741,7 @@ public abstract class AbstractEpollStreamChannel extends AbstractEpollChannel im
 
         @Override
         void epollInReady() {
+            // 得到客户端 EpollServerSocketChannel/EpollSocketChannel 配置类 EpollServerChannelConfig/EpollSocketChannelConfig
             final ChannelConfig config = config();
             if (shouldBreakEpollInReady(config)) {
                 clearEpollIn0();
@@ -749,8 +750,12 @@ public abstract class AbstractEpollStreamChannel extends AbstractEpollChannel im
             final EpollRecvByteAllocatorHandle allocHandle = recvBufAllocHandle();
             allocHandle.edgeTriggered(isFlagSet(Native.EPOLLET));
 
+            // 得到客户端 EpollSocketChannel 的 pipeline
             final ChannelPipeline pipeline = pipeline();
+            // 得到缓冲区分配器, 用于分配内存缓冲
+            // 非 Android 平台, 默认使用 PooledByteBufAllocator
             final ByteBufAllocator allocator = config.getAllocator();
+            // 重置读循环最大次数, 重置已读数据的总大小为 0, 重置已读循环的次数为 0
             allocHandle.reset(config);
             epollInBefore();
 
@@ -760,8 +765,10 @@ public abstract class AbstractEpollStreamChannel extends AbstractEpollChannel im
                 Queue<SpliceInTask> sQueue = null;
                 do {
                     if (sQueue != null || (sQueue = spliceQueue) != null) {
+                        // 获取 ChannelPromise 任务列表
                         SpliceInTask spliceTask = sQueue.peek();
                         if (spliceTask != null) {
+                            // 完成 ChannelPromise 回调
                             if (spliceTask.spliceIn(allocHandle)) {
                                 // We need to check if it is still active as if not we removed all SpliceTasks in
                                 // doClose(...)
@@ -775,23 +782,28 @@ public abstract class AbstractEpollStreamChannel extends AbstractEpollChannel im
                         }
                     }
 
-                    // we use a direct buffer here as the native implementations only be able
-                    // to handle direct buffers.
+                    // 通过分配处理器, 得到一个评估后的直接内存缓冲区
                     byteBuf = allocHandle.allocate(allocator);
+                    // 从 channel 中读取数据到 byteBuf, 然后根据已读取的大小计算下一次需要分配的 byteBuf 大小, 进行动态调整
                     allocHandle.lastBytesRead(doReadBytes(byteBuf));
+                    // 判断本次循环从对应的 channel 中是否已无法读取到数据
                     if (allocHandle.lastBytesRead() <= 0) {
-                        // nothing was read, release the buffer.
+                        // 释放缓冲区
                         byteBuf.release();
                         byteBuf = null;
                         close = allocHandle.lastBytesRead() < 0;
+                        // 判断是否收到 EOF
                         if (close) {
                             // There is nothing left to read as we received an EOF.
                             readPending = false;
                         }
+                        // 跳出读循环
                         break;
                     }
+                    // 已读循环的次数+1
                     allocHandle.incMessagesRead(1);
                     readPending = false;
+                    // 向 pipeline 中传递一个 channelRead 事件, 并带上这次循环读取到的数据
                     pipeline.fireChannelRead(byteBuf);
                     byteBuf = null;
 
@@ -810,8 +822,9 @@ public abstract class AbstractEpollStreamChannel extends AbstractEpollChannel im
                         break;
                     }
                 } while (allocHandle.continueReading());
-
+                // 对这次读取到的数据总大小进行评估, 用来判断下一次读取数据时分配多大的缓冲区(缓冲区容量伸缩)
                 allocHandle.readComplete();
+                // 向 pipeline 中传递一个 ChannelReadComplete 事件
                 pipeline.fireChannelReadComplete();
 
                 if (close) {
